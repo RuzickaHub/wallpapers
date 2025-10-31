@@ -1,77 +1,49 @@
-name: 🚀 Deploy via FTP with Smart Fallback
+name: 🚀 Deploy Neuromorph Gallery
 
 on:
   push:
     branches:
-      - main
-  workflow_dispatch: # možnost spustit ručně z GitHubu
+      - main  # automatické spuštění při commitu do main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
 
 jobs:
-  ftp-deploy:
-    name: 🌐 Upload to FTP Server (FTPS → FTP fallback)
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      # --- 1. Checkout repository ---
-      - name: 🧩 Checkout repository
+      - name: 📂 Checkout repository
         uses: actions/checkout@v4
 
-      # --- 2. Optional build step ---
-      - name: ⚙️ Prepare project
+      - name: ⚙️ Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: 🧱 Build project
         run: |
-          echo "✅ Projekt připraven pro upload"
-          echo "🧹 Vylučuji nepotřebné soubory (.git, cache, .zip...)"
+          echo "🧩 Build step not required – static PHP files ready."
+          mkdir dist
+          cp -R ./* dist/
+          rm -rf dist/.git dist/.github dist/node_modules || true
 
-      # --- 3. Attempt secure FTPS upload ---
-      - name: 🚀 Deploy via FTPS
-        id: ftps
-        continue-on-error: true   # umožní fallback, pokud FTPS selže
-        uses: SamKirkland/FTP-Deploy-Action@4.3.0
+      - name: 📦 Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: ./
-          server-dir: /
-          protocol: ftps
-          port: 21
-          timeout: 120000
-          exclude: |
-            **/.git*
-            **/.github*
-            **/node_modules/**
-            **/cache/**
-            **/*.zip
-            **/*.md
-            **/README.*
-            **/LICENSE
-          log-level: verbose
+          path: dist
 
-      # --- 4. Fallback to FTP if FTPS failed ---
-      - name: 🔁 Retry via plain FTP (fallback)
-        if: steps.ftps.outcome == 'failure'
-        uses: SamKirkland/FTP-Deploy-Action@4.3.0
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: ./
-          server-dir: /
-          protocol: ftp
-          port: 21
-          timeout: 120000
-          exclude: |
-            **/.git*
-            **/.github*
-            **/node_modules/**
-            **/cache/**
-            **/*.zip
-            **/*.md
-            **/README.*
-            **/LICENSE
-          log-level: minimal
-
-      # --- 5. Confirmation message ---
-      - name: ✅ Confirm deploy success
-        if: success()
-        run: echo "✅ FTP/FTPS deploy completed successfully!"
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 🚀 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
