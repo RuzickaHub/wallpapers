@@ -1,9 +1,9 @@
-name: 🚀 Deploy Neuromorph Gallery
+name: 🚀 Smart deploy (Pages or Package)
 
 on:
   push:
-    branches:
-      - main  # automatické spuštění při commitu do main
+    branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,39 +11,92 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "deploy-smart"
   cancel-in-progress: true
 
 jobs:
-  build:
+  prepare:
+    name: Prepare and detect project type
     runs-on: ubuntu-latest
-
+    outputs:
+      has_php: ${{ steps.detect.outputs.has_php }}
+      artifact_path: ${{ steps.package.outputs.artifact_path }}
     steps:
-      - name: 📂 Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: 🧱 Build project
+      - name: Detect PHP files
+        id: detect
         run: |
-          echo "🧩 Build step not required – static PHP files ready."
-          mkdir dist
-          cp -R ./* dist/
-          rm -rf dist/.git dist/.github dist/node_modules || true
+          echo "Searching for .php files..."
+          if git ls-files | grep -E '\.php$' -q; then
+            echo "has_php=true" >> $GITHUB_OUTPUT
+            echo "Found PHP files"
+          else
+            echo "has_php=false" >> $GITHUB_OUTPUT
+            echo "No PHP files found"
+          fi
 
-      - name: 📦 Upload artifact
+      - name: Prepare package (zip) for safe artifact
+        id: package
+        run: |
+          # Create a zip of the repo (exclude large, unnecessary folders)
+          PKG="project-package.zip"
+          zip -r "$PKG" . -x ".git/*" ".github/*" "node_modules/*" "dist/*" "cache/*" "*.zip"
+          echo "artifact_path=$PKG" >> $GITHUB_OUTPUT
+
+  publish-static:
+    name: Deploy to GitHub Pages (static only)
+    needs: prepare
+    if: needs.prepare.outputs.has_php == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build static site (copy repo -> dist)
+        run: |
+          mkdir -p dist
+          # Copy everything except files that shouldn't be on Pages (PHP, server config)
+          rsync -av --exclude='.git' --exclude='.github' --exclude='*.php' --exclude='uploads' --exclude='cache' --exclude='node_modules' ./ dist/
+          # Optional: run any build, e.g. npm run build (uncomment if needed)
+          # npm ci && npm run build && cp -R build/* dist/
+
+      - name: Upload artifact for Pages
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
-  deploy:
+  deploy-pages:
+    name: Deploy Pages
+    needs: publish-static
+    if: needs.prepare.outputs.has_php == 'false'
     runs-on: ubuntu-latest
-    needs: build
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: 🚀 Deploy to GitHub Pages
-        id: deployment
+      - name: Deploy to GitHub Pages
+        id: deploy
         uses: actions/deploy-pages@v4
+
+      - name: Show Pages URL
+        run: echo "Pages deployed: ${{ steps.deploy.outputs.page_url }}"
+
+  artifact-for-php:
+    name: Package artifact for PHP project
+    needs: prepare
+    if: needs.prepare.outputs.has_php == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload project ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: php-project-package
+          path: ${{ needs.prepare.outputs.artifact_path }}
+
+      - name: Notify
+        run: |
+          echo "‼️ Repository contains PHP files."
+          echo "GitHub Pages cannot run PHP. Uploaded project ZIP as artifact (php-project-package)."
+          echo "To deploy a functional PHP app you need a PHP-enabled host (FTP/SSH/VPS)."
