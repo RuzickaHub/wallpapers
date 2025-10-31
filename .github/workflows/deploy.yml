@@ -1,16 +1,77 @@
-name: Deploy to FTP
+name: 🚀 Deploy via FTP with Smart Fallback
+
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+  workflow_dispatch: # možnost spustit ručně z GitHubu
+
 jobs:
-  deploy:
+  ftp-deploy:
+    name: 🌐 Upload to FTP Server (FTPS → FTP fallback)
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Upload files via FTP
+      # --- 1. Checkout repository ---
+      - name: 🧩 Checkout repository
+        uses: actions/checkout@v4
+
+      # --- 2. Optional build step ---
+      - name: ⚙️ Prepare project
+        run: |
+          echo "✅ Projekt připraven pro upload"
+          echo "🧹 Vylučuji nepotřebné soubory (.git, cache, .zip...)"
+
+      # --- 3. Attempt secure FTPS upload ---
+      - name: 🚀 Deploy via FTPS
+        id: ftps
+        continue-on-error: true   # umožní fallback, pokud FTPS selže
         uses: SamKirkland/FTP-Deploy-Action@4.3.0
         with:
-          server: ${{ secrets.FTP_HOST }}
-          username: ${{ secrets.FTP_USER }}
-          password: ${{ secrets.FTP_PASS }}
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./
+          server-dir: /
+          protocol: ftps
+          port: 21
+          timeout: 120000
+          exclude: |
+            **/.git*
+            **/.github*
+            **/node_modules/**
+            **/cache/**
+            **/*.zip
+            **/*.md
+            **/README.*
+            **/LICENSE
+          log-level: verbose
+
+      # --- 4. Fallback to FTP if FTPS failed ---
+      - name: 🔁 Retry via plain FTP (fallback)
+        if: steps.ftps.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@4.3.0
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./
+          server-dir: /
+          protocol: ftp
+          port: 21
+          timeout: 120000
+          exclude: |
+            **/.git*
+            **/.github*
+            **/node_modules/**
+            **/cache/**
+            **/*.zip
+            **/*.md
+            **/README.*
+            **/LICENSE
+          log-level: minimal
+
+      # --- 5. Confirmation message ---
+      - name: ✅ Confirm deploy success
+        if: success()
+        run: echo "✅ FTP/FTPS deploy completed successfully!"
